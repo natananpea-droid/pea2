@@ -29,6 +29,23 @@ import {
   Lock
 } from "lucide-react";
 
+async function parseResponseError(res: Response, defaultMsg: string): Promise<string> {
+  try {
+    const clonedRes = res.clone();
+    const data = await clonedRes.json();
+    return data.error || defaultMsg;
+  } catch {
+    try {
+      const rawText = await res.text();
+      if (rawText) {
+        const cleaned = rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+        return cleaned.substring(0, 150) || defaultMsg;
+      }
+    } catch {}
+    return defaultMsg;
+  }
+}
+
 export default function App() {
   // Navigation & Authentication state
   const [accountType, setAccountType] = useState<AccountType>("NONE");
@@ -388,8 +405,8 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "ไม่สามารถทำการเชื่อมลบข้อมูลพิกัดผู้ป่วยได้สำเร็จ");
+        const errorMsg = await parseResponseError(res, "ไม่สามารถทำการเชื่อมลบข้อมูลพิกัดผู้ป่วยได้สำเร็จ");
+        throw new Error(errorMsg);
       }
 
       alert("ลบพิกัดข้อมูลผู้ป่วยออกจากระบบเรียบร้อยแล้ว");
@@ -426,8 +443,8 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "ไม่สามารถขอรับส่งแจ้งเหตุการณ์ได้ในขณะนี้");
+        const errorMsg = await parseResponseError(res, "ไม่สามารถขอรับส่งแจ้งเหตุการณ์ได้ในขณะนี้");
+        throw new Error(errorMsg);
       }
 
       alert("✓ แจ้งเหตุการณ์ไฟฟ้าดับฉุกเฉินสำเร็จแล้ว! ระบบเริ่มเฝ้าระวังเตือนภัยทันที");
@@ -457,8 +474,8 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "ไม่สามารถปรับสถานะกระแสไฟฟ้ากลับเป็นปกติได้");
+        const errorMsg = await parseResponseError(res, "ไม่สามารถปรับสถานะกระแสไฟฟ้ากลับเป็นปกติได้");
+        throw new Error(errorMsg);
       }
 
       const data = await res.json();
@@ -526,8 +543,8 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error);
+        const errorMsg = await parseResponseError(res, "ล้มเหลวในการปรับตามคำสั่งของระบบควบคุมหลัก");
+        throw new Error(errorMsg);
       }
 
       alert("แก้ไขรายงานไฟดับในเขตระยองเสร็จสมบูรณ์");
@@ -553,8 +570,8 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error);
+        const errorMsg = await parseResponseError(res, "ล้มเหลวในการลบลบข้อมูลรายงานภัยพิบัติ");
+        throw new Error(errorMsg);
       }
 
       alert("ลบข้อมูลรายงานสำเร็จแล้ว");
@@ -825,11 +842,11 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Surveillance Map rendering (patients hidden!) */}
+              {/* Surveillance Map rendering (patients are hidden, reports are visible!) */}
               <div className="grow rounded-xl overflow-hidden shadow-sm h-[450px]">
                 <SurveillanceMap
                   patients={[]} // ABSOLUTELY HIDDEN FOR PRIVACY
-                  reports={reports}
+                  reports={reports} // FULLY VISIBLE TO SHOW GENERAL DISASTER LOCATIONS
                   showPatients={false} // GUARD ACTIVATED
                   outageZoneCenter={null}
                   outageZoneRadius={1.5}
@@ -1334,11 +1351,47 @@ export default function App() {
                                 }`}>
                                   {p.emergency_type}
                                 </span>
-                                {p.isAffected && (
-                                  <span className="text-[9px] bg-red-600 text-white font-extrabold py-0.5 px-1.5 rounded-full animate-pulse uppercase">
-                                    ⚠️ OUTAGE
-                                  </span>
+                                
+                                {p.isAffected ? (
+                                  <div className="flex items-center space-x-1 flex-wrap">
+                                    <span className="text-[9px] bg-red-100 text-red-800 border border-red-300 font-extrabold py-0.5 px-1.5 rounded-full animate-pulse uppercase flex items-center space-x-0.5">
+                                      <span>🔴</span>
+                                      <span>ไฟดับ</span>
+                                    </span>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleInstantResolve(p);
+                                      }}
+                                      disabled={instantReporting}
+                                      className="text-[9px] bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-extrabold py-0.5 px-1.5 rounded-full cursor-pointer hover:scale-105 active:scale-95 transition flex items-center space-x-0.5 shadow-sm"
+                                      title="กดเพื่อบันทึกงานแก้ไฟสำเร็จ"
+                                    >
+                                      <span>✅</span>
+                                      <span>แก้ไฟสำเร็จ</span>
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center space-x-1 flex-wrap">
+                                    <span className="text-[9px] bg-green-50 text-green-700 border border-green-200 font-extrabold py-0.5 px-1.5 rounded-full uppercase flex items-center space-x-0.5">
+                                      <span>🟢</span>
+                                      <span>จ่ายไฟปกติ</span>
+                                    </span>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleInstantReport(p);
+                                      }}
+                                      disabled={instantReporting}
+                                      className="text-[9px] bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 text-white font-extrabold py-0.5 px-1.5 rounded-full cursor-pointer hover:scale-105 active:scale-95 transition flex items-center space-x-0.5 shadow-sm"
+                                      title="กดเพื่อส่งรายงานสถานะไฟดับ"
+                                    >
+                                      <span>⚠️</span>
+                                      <span>แจ้งไฟดับ</span>
+                                    </button>
+                                  </div>
                                 )}
+
                                 <span className="font-bold text-slate-900 text-xs">
                                   คุณ {p.owner_name}
                                 </span>
@@ -1736,14 +1789,26 @@ export default function App() {
                             {rep.fixed_status === "RESOLVED" ? "ปิดเคสสำเร็จ" : "ไฟดับค้างงาน"}
                           </span>
                           
-                          <button
-                            onClick={() => handleDeleteReport(rep.report_id)}
-                            className="text-[10px] text-rose-600 hover:text-rose-105 hover:bg-rose-100 border border-transparent hover:border-rose-200 p-1 rounded-md transition duration-150 flex items-center space-x-0.5"
-                            title="ลบรายงานนี้ออกจากคลังถาวร"
-                          >
-                            <span>🗑️</span>
-                            <span>ลบประวัติ</span>
-                          </button>
+                          <div className="flex items-center space-x-1">
+                            {rep.fixed_status !== "RESOLVED" && (
+                              <button
+                                onClick={() => handleResolveOutage(rep.report_id)}
+                                className="text-[10px] font-bold text-green-600 hover:text-white hover:bg-green-600 border border-green-200 p-1 rounded-md transition duration-150 flex items-center space-x-0.5 whitespace-nowrap cursor-pointer"
+                                title="ยืนยันแก้เคสนี้ไฟปกติ"
+                              >
+                                <span>✅</span>
+                                <span>แก้สำเร็จ</span>
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDeleteReport(rep.report_id)}
+                              className="text-[10px] text-rose-600 hover:text-rose-105 hover:bg-rose-100 border border-transparent hover:border-rose-200 p-1 rounded-md transition duration-150 flex items-center space-x-0.5"
+                              title="ลบรายงานนี้ออกจากคลังถาวร"
+                            >
+                              <span>🗑️</span>
+                              <span>ลบประวัติ</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))

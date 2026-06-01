@@ -115,8 +115,20 @@ export default function OutageForm({
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "ไม่สามารถขอรับส่งแจ้งเหตุการณ์ได้ในขณะนี้");
+        let errMsg = "ไม่สามารถขอรับส่งแจ้งเหตุการณ์ได้ในขณะนี้";
+        try {
+          const data = await res.json();
+          errMsg = data.error || errMsg;
+        } catch {
+          try {
+            const rawText = await res.text();
+            if (rawText) {
+              const cleaned = rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+              errMsg = cleaned.substring(0, 150) || errMsg;
+            }
+          } catch {}
+        }
+        throw new Error(errMsg);
       }
 
       setSuccessMsg("แจ้งเหตุการณ์ไฟฟ้าขัดข้องสำเร็จ! ขอบคุณที่ร่วมปกป้องผู้ป่วยกลุ่มเปราะบาง");

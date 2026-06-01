@@ -107,10 +107,29 @@ export default function PatientForm({
       });
 
       if (!res.ok) {
-        throw new Error("ล้มเหลวในการส่งข้อมูลวิเคราะห์ระดับเตียงไปยังระบบอัจฉริยะ");
+        let errMsg = "ล้มเหลวในการส่งข้อมูลวิเคราะห์ระดับเตียงไปยังระบบอัจฉริยะ";
+        try {
+          const errData = await res.json();
+          errMsg = errData.error || errMsg;
+        } catch {
+          try {
+            const rawText = await res.text();
+            if (rawText) {
+              const cleaned = rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+              errMsg = cleaned.substring(0, 150) || errMsg;
+            }
+          } catch {}
+        }
+        throw new Error(errMsg);
       }
 
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch (jsonErr: any) {
+        throw new Error("ระบบวิเคราะห์ผลลัพธ์ผิดพลาดเนื่องจากคำตอบไม่ได้อยู่ในรูปแบบ JSON: " + jsonErr.message);
+      }
+
       setAiResult({
         priority: data.priority,
         reason: data.reason,
@@ -201,8 +220,20 @@ export default function PatientForm({
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "ไม่สามารถลงทะเบียนบันทึกข้อมูลเข้าระบบพิกัดภัยพิบัติได้");
+        let errMsg = "ไม่สามารถลงทะเบียนบันทึกข้อมูลเข้าระบบพิกัดภัยพิบัติได้";
+        try {
+          const data = await res.json();
+          errMsg = data.error || errMsg;
+        } catch {
+          try {
+            const rawText = await res.text();
+            if (rawText) {
+              const cleaned = rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+              errMsg = cleaned.substring(0, 150) || errMsg;
+            }
+          } catch {}
+        }
+        throw new Error(errMsg);
       }
 
       setSuccessMsg("✓ ลงทะเบียนบันทึกข้อมูลประวัติผู้ป่วยพิกัดความปลอดภัยสำเร็จเรียบร้อยแล้ว");
