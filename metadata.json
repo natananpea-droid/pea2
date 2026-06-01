@@ -1,0 +1,6 @@
+{
+  "name": "LifeLine ElectriGuard - ระบบเฝ้าระวังผู้ป่วยติดเตียงกรณีไฟฟ้าดับ",
+  "description": "ระบบระบุคู่ขนานพิกัดช่วยชีวิตและแจ้งภัยพิบัติ อาสาสมัครบ่มเพาะพลังปกป้องผู้ป่วยติดเตียงกรณีดับไฟหรือเกิดวิกฤตไฟฟ้าดับ",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
