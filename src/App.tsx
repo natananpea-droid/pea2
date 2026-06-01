@@ -24,13 +24,19 @@ import {
   Moon,
   Sun,
   Search,
-  Check
+  Check,
+  Phone,
+  Lock
 } from "lucide-react";
 
 export default function App() {
   // Navigation & Authentication state
   const [accountType, setAccountType] = useState<AccountType>("NONE");
   const [currentPage, setCurrentPage] = useState<"LOGIN" | "CONSUMER" | "ADMIN">("LOGIN");
+  const [showAdminEntry, setShowAdminEntry] = useState(false);
+  const [adminTab, setAdminTab] = useState<"MAP" | "ANALYTICS">("MAP");
+  const [newOutageAlert, setNewOutageAlert] = useState<OutageReport | null>(null);
+  const lastFetchedReportsRef = useRef<OutageReport[]>([]);
   
   // Login input states
   const [consumerPhone, setConsumerPhone] = useState("");
@@ -69,6 +75,40 @@ export default function App() {
   const sirenModGainRef = useRef<GainNode | null>(null);
   const sirenGainNodeRef = useRef<GainNode | null>(null);
 
+  const syncDataSilently = async () => {
+    try {
+      const patientRes = await fetch("/api/patients");
+      const patientData: Patient[] = await patientRes.json();
+      if (Array.isArray(patientData)) {
+        setPatients(patientData);
+      }
+
+      const reportRes = await fetch("/api/reports");
+      const reportData: OutageReport[] = await reportRes.json();
+      if (Array.isArray(reportData)) {
+        if (lastFetchedReportsRef.current && lastFetchedReportsRef.current.length > 0) {
+          const previousIds = new Set(lastFetchedReportsRef.current.map(r => r.report_id));
+          const newPendingReport = reportData.find(
+            r => r.fixed_status === "PENDING" && !previousIds.has(r.report_id)
+          );
+          if (newPendingReport) {
+            setNewOutageAlert(newPendingReport);
+            // Auto start sound alert
+            setIsMuted(false);
+            startSiren();
+            setTimeout(() => {
+              stopSiren();
+            }, 5000);
+          }
+        }
+        setReports(reportData);
+        lastFetchedReportsRef.current = reportData;
+      }
+    } catch (err) {
+      console.warn("Silent sync failed in background:", err);
+    }
+  };
+
   // Load backend database records on startup
   const fetchData = async () => {
     setLoading(true);
@@ -82,7 +122,9 @@ export default function App() {
       // 2. Fetch Outage Reports (electricity_down_report)
       const reportRes = await fetch("/api/reports");
       const reportData: OutageReport[] = await reportRes.json();
-      setReports(Array.isArray(reportData) ? reportData : []);
+      const loadedReports = Array.isArray(reportData) ? reportData : [];
+      setReports(loadedReports);
+      lastFetchedReportsRef.current = loadedReports;
     } catch (err: any) {
       console.error("Failed to load records from Supabase:", err);
       setErrorStatus("ล้มเหลวในการเชื่อมโยงกับฐานข้อมูลจังหวัดระยอง: " + err.message);
@@ -94,6 +136,19 @@ export default function App() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Periodic background polling (sync) for Admin dashboard
+  useEffect(() => {
+    let interval: any = null;
+    if (currentPage === "ADMIN") {
+      interval = setInterval(() => {
+        syncDataSilently();
+      }, 5000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [currentPage]);
 
   // Compute subdistricts list for filter options
   const subdistricts = useMemo(() => {
@@ -290,17 +345,23 @@ export default function App() {
     }
   };
 
-  // Synchronize wailing siren sound with impacted patients state
+  // Synchronize wailing siren sound with impacted patients state (Auto stop after 5 seconds)
   useEffect(() => {
+    let timer: any = null;
     // Siren should trigger ONLY on ADMIN dashboard when at least one patient is currently in 'OUTAGE' impact zone
     if (currentPage === "ADMIN" && affectedVulnerableCount > 0 && !isMuted) {
       startSiren();
+      // Auto silence after 5 seconds to prevent user annoyance
+      timer = setTimeout(() => {
+        stopSiren();
+      }, 5000);
     } else {
       stopSiren();
     }
 
     return () => {
       stopSiren();
+      if (timer) clearTimeout(timer);
     };
   }, [currentPage, affectedVulnerableCount, isMuted]);
 
@@ -318,9 +379,10 @@ export default function App() {
   // Admin delete patient request
   const handleDeletePatient = async (id: string) => {
     try {
-      const res = await fetch(`/api/patients/${id}`, {
+      const res = await fetch(`/api/patients/${id}?pin=h02101`, {
         method: "DELETE",
         headers: {
+          "x-admin-pin": "h02101",
           "X-Admin-PIN": "h02101" // Admin validation
         }
       });
@@ -433,13 +495,32 @@ export default function App() {
     return reports.filter((r) => r.fixed_status !== "RESOLVED").length;
   }, [reports]);
 
+  const isToday = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      const today = new Date();
+      return (
+        d.getDate() === today.getDate() &&
+        d.getMonth() === today.getMonth() &&
+        d.getFullYear() === today.getFullYear()
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  const todayReports = useMemo(() => {
+    return reports.filter((r) => isToday(r.created_at));
+  }, [reports]);
+
   // Admin Toggle Outage Report status to RESOLVED
   const handleResolveOutage = async (reportId: string) => {
     try {
-      const res = await fetch(`/api/reports/${reportId}/resolve`, {
+      const res = await fetch(`/api/reports/${reportId}/resolve?pin=h02101`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-admin-pin": "h02101",
           "X-Admin-PIN": "h02101",
         },
       });
@@ -462,10 +543,11 @@ export default function App() {
     if (!isConfirmed) return;
 
     try {
-      const res = await fetch(`/api/reports/${reportId}`, {
+      const res = await fetch(`/api/reports/${reportId}?pin=h02101`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
+          "x-admin-pin": "h02101",
           "X-Admin-PIN": "h02101",
         },
       });
@@ -589,72 +671,140 @@ export default function App() {
             ======================================= */}
         {currentPage === "LOGIN" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 grow items-stretch animate-fadeIn">
-            {/* Left Column: Logins Selection */}
-            <div className="lg:col-span-5 flex flex-col justify-center space-y-6">
-              <div className="space-y-2">
-                <h2 className="text-2xl font-bold text-slate-950 tracking-tight flex items-center space-x-2">
-                  <span>🏥</span>
-                  <span>กรุณาเลือกช่องทางการเข้าสู่ระบบ</span>
-                </h2>
-                <p className="text-xs text-slate-500">
-                  ระบบนี้จัดทำเพื่อการไฟฟ้าส่วนภูมิภาคระยอง สมาชิกอาสาสมัครร่วมรายงาน และบุคลากรทางการแพทย์เพื่อปกป้องผู้รับรักษางานเครื่องช่วยชีวิต
-                </p>
-              </div>
+            {/* Left Column: Centered, Beautiful Mockup Card */}
+            <div className="lg:col-span-5 flex flex-col justify-center items-center">
+              <div className="w-full max-w-md bg-white border border-slate-100/80 p-8 rounded-3xl shadow-xl shadow-slate-100/50 space-y-6 text-center animate-fadeIn">
+                
+                {!showAdminEntry ? (
+                  /* Box 1: Caregiver/Consumer phone login */
+                  <form onSubmit={handleConsumerLogin} className="space-y-6">
+                    {/* Phone blue circle icon */}
+                    <div className="flex justify-center">
+                      <div className="p-4.5 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center shadow-inner">
+                        <Phone className="h-6 w-6 stroke-[2.5]" />
+                      </div>
+                    </div>
 
-              {/* Box 1: Consumer Phone login */}
-              <div className="bg-slate-50 border border-slate-200 hover:border-violet-300 p-6 rounded-xl shadow-sm transition hover:shadow-md">
-                <span className="text-2xl">⚡</span>
-                <h3 className="font-bold text-slate-900 text-sm mt-2">สำหรับประชาชน / ผู้แจ้งเหตุไฟฟ้าดับ</h3>
-                <p className="text-[11px] text-slate-500 mb-4 h-9">
-                  เข้าระบบเพื่อรายงานไฟฟ้าดับ เสากริ่งชำรุด หรือพื้นที่อันตราย และดูประวัติรายงานของตนเอง
-                </p>
-                <form onSubmit={handleConsumerLogin} className="space-y-3">
-                  <div className="space-y-1">
-                    <label className="block text-[10px] text-slate-600 font-bold uppercase">ระบุหมายเลขโทรศัพท์ติดต่อ</label>
-                    <input
-                      type="tel"
-                      value={consumerPhone}
-                      onChange={(e) => setConsumerPhone(e.target.value)}
-                      required
-                      placeholder="เช่น 0812345678"
-                      className="w-full p-2 bg-white border border-slate-200 rounded font-mono text-sm tracking-wide text-slate-800"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full py-2 bg-violet-700 hover:bg-violet-800 text-white font-bold rounded text-xs transition cursor-pointer"
-                  >
-                    เข้าใช้งานฐานบัญชีผู้ใช้ไฟฟ้า 🔓
-                  </button>
-                </form>
-              </div>
+                    {/* Titles */}
+                    <div className="space-y-2">
+                      <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
+                        เข้าสู่ระบบผู้สิทธิ์ดูแล
+                      </h2>
+                      <p className="text-[11.5px] text-slate-550 text-slate-500 font-medium px-4 leading-relaxed">
+                        กรุณาระบุเบอร์โทรศัพท์มือถือที่ได้รับการลงทะเบียนจองเตียงผู้ป่วย เพื่อใช้บริการระยองมอนิเตอร์ไฟตกดับ
+                      </p>
+                    </div>
 
-              {/* Box 2: Admin PIN login */}
-              <div className="bg-slate-50 border border-slate-200 hover:border-rose-300 p-6 rounded-xl shadow-sm transition hover:shadow-md">
-                <span className="text-2xl">👨‍💼</span>
-                <h3 className="font-bold text-slate-900 text-sm mt-2">สำหรับผู้ดูแลระบบและอาสาสมัครคู่ช่วย</h3>
-                <p className="text-[11px] text-slate-500 mb-4 h-9">
-                  สำหรับเจ้าหน้าที่ PEA ระยอง เข้าควบคุม แนะนำ และบริหารจัดการพิกัดคุ้มครองพร้อมสิทธิ์แก้ไข
-                </p>
-                <form onSubmit={handleAdminLogin} className="space-y-3">
-                  <div className="space-y-1">
-                    <label className="block text-[10px] text-slate-600 font-bold uppercase">รหัสแอดมินจำนงแก้ไข (Admin PIN)</label>
-                    <input
-                      type="password"
-                      value={adminPassword}
-                      onChange={(e) => setAdminPassword(e.target.value)}
-                      required
-                      placeholder="ระบุรหัสผ่านแอดมินผู้ดูแล"
-                      className="w-full p-2 bg-white border border-slate-200 rounded text-sm text-slate-800"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded text-xs transition cursor-pointer"
-                  >
-                    ยืนยันตัวตนเจ้าหน้าคลังคุมภัย 📡
-                  </button>
-                </form>
+                    {/* Numeric Input */}
+                    <div className="space-y-2 text-left">
+                      <label className="block text-[10px] text-slate-400 font-extrabold tracking-wider text-center uppercase font-mono">
+                        MOBILE PHONE NUMBER
+                      </label>
+                      <input
+                        type="tel"
+                        value={consumerPhone}
+                        onChange={(e) => setConsumerPhone(e.target.value)}
+                        required
+                        placeholder="เช่น 0812345678"
+                        className="w-full p-4 bg-slate-50 border border-slate-150 rounded-2xl text-center text-slate-800 text-lg md:text-xl font-extrabold tracking-widest placeholder:text-slate-300 placeholder:font-bold focus:ring-2 focus:ring-blue-500/20 focus:bg-white outline-none font-mono transition"
+                      />
+                    </div>
+
+                    {/* Action Button */}
+                    <button
+                      type="submit"
+                      className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-lg shadow-blue-100 hover:shadow-xl hover:shadow-blue-200 hover:scale-[1.01] active:scale-[0.99] transition duration-150 cursor-pointer text-xs uppercase tracking-wide"
+                    >
+                      ยืนยันตัวตนตรวจสอบพิกัด
+                    </button>
+
+                    {/* Splitter Divider */}
+                    <div className="relative flex py-2 items-center">
+                      <div className="flex-grow border-t border-slate-100"></div>
+                      <span className="flex-shrink mx-4 text-[10px] text-slate-300 font-extrabold tracking-widest uppercase font-mono">
+                        OR STAFF PORTAL
+                      </span>
+                      <div className="flex-grow border-t border-slate-100"></div>
+                    </div>
+
+                    {/* Admin Toggle button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAdminEntry(true);
+                        setAdminPassword("");
+                      }}
+                      className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-2xl shadow-md active:scale-95 transition text-xs flex items-center justify-center space-x-2 cursor-pointer"
+                    >
+                      <Lock className="h-3.5 w-3.5 mr-1" />
+                      <span>ลงชื่อเข้าใช้ด้วยบัญชีแอดมิน (Admin)</span>
+                    </button>
+                  </form>
+                ) : (
+                  /* Box 2: Admin PIN entering */
+                  <form onSubmit={handleAdminLogin} className="space-y-6">
+                    {/* Admin Lock circle icon */}
+                    <div className="flex justify-center">
+                      <div className="p-4.5 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center shadow-inner animate-pulse">
+                        <Lock className="h-6 w-6 stroke-[2.5]" />
+                      </div>
+                    </div>
+
+                    {/* Titles */}
+                    <div className="space-y-2">
+                      <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
+                        ลงชื่อเข้าใช้งานสำหรับแอดมิน
+                      </h2>
+                      <p className="text-[11.5px] text-slate-500 font-medium px-4 leading-relaxed">
+                        สำหรับเจ้าหน้าที่ PEA ระยอง เข้าควบคุมและจัดการสิทธิ์แก้ไข ทะเบียนผู้ป่วยเปราะบางในพิกัดภัยพิบัติ
+                      </p>
+                    </div>
+
+                    {/* PIN input */}
+                    <div className="space-y-2 text-left">
+                      <label className="block text-[10px] text-slate-400 font-extrabold tracking-wider text-center uppercase font-mono">
+                        ADMIN SECURITY PIN
+                      </label>
+                      <input
+                        type="password"
+                        value={adminPassword}
+                        onChange={(e) => setAdminPassword(e.target.value)}
+                        required
+                        placeholder="กรอกรหัสผ่านแอดมิน"
+                        className="w-full p-4 bg-slate-50 border border-slate-150 rounded-2xl text-center text-slate-800 text-lg md:text-xl font-extrabold tracking-widest placeholder:text-slate-300 placeholder:font-bold focus:ring-2 focus:ring-rose-500/20 focus:bg-white outline-none font-mono transition"
+                      />
+                    </div>
+
+                    {/* Sign in Admin action button */}
+                    <button
+                      type="submit"
+                      className="w-full py-3.5 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-2xl shadow-lg shadow-rose-100 hover:shadow-xl hover:shadow-rose-200 hover:scale-[1.01] active:scale-[0.99] transition duration-150 cursor-pointer text-xs uppercase tracking-wide"
+                    >
+                      ยืนยันตัวตนเจ้าหน้าที่ 📡
+                    </button>
+
+                    {/* Splitter Divider */}
+                    <div className="relative flex py-2 items-center">
+                      <div className="flex-grow border-t border-slate-100"></div>
+                      <span className="flex-shrink mx-4 text-[10px] text-slate-300 font-extrabold tracking-widest uppercase font-mono">
+                        OR CAREGIVER PORTAL
+                      </span>
+                      <div className="flex-grow border-t border-slate-100"></div>
+                    </div>
+
+                    {/* Back button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAdminEntry(false);
+                      }}
+                      className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl active:scale-95 transition text-xs flex items-center justify-center space-x-1 cursor-pointer"
+                    >
+                      <Phone className="h-3.5 w-3.5 mr-1" />
+                      <span>กลับไปหน้าเข้าสู่ระบบประชาชน (Caregiver)</span>
+                    </button>
+                  </form>
+                )}
               </div>
             </div>
 
@@ -663,15 +813,15 @@ export default function App() {
               <div className="flex justify-between items-center border-b border-slate-200 pb-2 bg-slate-50 p-3 rounded-lg">
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm flex items-center space-x-1.5">
-                    <span className="text-red-500 animate-pulse">●</span>
-                    <span>รายงานพื้นที่พลังงานไฟฟ้าดับขัดข้องในอ.เมืองระยองขณะนี้</span>
+                    <span className="text-rose-500 animate-pulse">●</span>
+                    <span>รายงานพื้นที่พลังงานไฟฟ้าดับขัดข้องในอ.เมืองระยองขณะนี้ (Live Maps)</span>
                   </h3>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
+                  <p className="text-[10px] text-slate-550 text-slate-500 mt-0.5">
                     แสดงเฉพาะพิกัดจุดแจ้งเหตุ และรัศมีความขัดข้อง (ห้ามเปิดเผยระบบข้อมูลผู้ป่วยเปราะบางเพื่อความเป็นส่วนตัวทางการแพทย์)
                   </p>
                 </div>
-                <span className="text-xs bg-red-100 text-red-800 py-1 px-2 rounded-full font-bold">
-                  {pendingOutagesCount} จุดที่กำลังดำเนินการอยู่
+                <span className="text-xs bg-rose-100 text-rose-800 py-1 px-2.5 rounded-full font-bold">
+                  {reports.filter(r => r.fixed_status !== "RESOLVED").length} จุดขัดข้องสะสมค้างอยู่
                 </span>
               </div>
 
@@ -688,30 +838,15 @@ export default function App() {
                 />
               </div>
 
-              {/* Inline layout help list */}
-              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
-                <p className="font-bold text-xs text-slate-800">📋 เหตุขัดข้องทางโครงข่ายไฟฟ้าจังหวัดระยอง:</p>
-                {reports.filter(r => r.fixed_status !== "RESOLVED").length === 0 ? (
-                  <p className="text-xs text-slate-500 italic text-center p-2">🎉 เขตเมืองระยองไม่มีเหตุไฟฟ้าขัดข้องคงค้างในขณะนี้ ระบบจ่ายไฟทำงานปกติ</p>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[140px] overflow-y-auto">
-                    {reports
-                      .filter(r => r.fixed_status !== "RESOLVED")
-                      .map((rep) => (
-                        <div key={rep.report_id} className="p-2 bg-white rounded border border-slate-100 text-[11px] flex gap-2">
-                          <span className="text-rose-500">⚡</span>
-                          <div>
-                            <p className="font-bold text-slate-800">
-                              {rep.report_type} พิกัด ม.{rep.address_number} ต.{rep.sub_distric}
-                            </p>
-                            <p className="text-[10px] text-slate-500">
-                              ผู้แจ้ง: {rep.reporter_name} ({new Date(rep.created_at).toLocaleTimeString("th-TH")})
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                )}
+              {/* Locked details placeholder because not logged in */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-center py-5 space-y-1">
+                <p className="font-bold text-xs text-slate-800 flex items-center justify-center space-x-1">
+                  <span>🔒</span>
+                  <span>ข้อมูลประวัติและสถานที่รายงานพลังงานไฟฟ้าขัดข้องเชิงลึก</span>
+                </p>
+                <p className="text-[10.5px] text-slate-550 text-slate-500">
+                  กรุณาเข้าสู่ระบบประชาชน (Caregiver) หรือระบบเจ้าหน้าที่ (Admin) ในกล่องด้านซ้ายเพื่อเปิดข้อมูลรายละเอียดพิกัดเชิงลึก
+                </p>
               </div>
             </div>
           </div>
@@ -763,46 +898,75 @@ export default function App() {
                         <span>✓</span>
                         <span>ข้อมูลบริการไฟฟ้า/เบอร์โทรศัพท์ของท่าน มีประวัติลงทะเบียนแล้ว</span>
                       </p>
-                      {matchedUserPatients.map((p) => (
-                        <div key={p.emer_house_id} className="mt-2 bg-white/90 p-2.5 rounded border border-green-200 text-slate-700">
-                          <p><b>ชื่อผู้ป่วยหลัก:</b> {p.owner_name}</p>
-                          <p><b>เบอร์ติดต่อฉุกเฉิน:</b> {p.telephone_number || "ไม่ได้ลงทะเบียนเบอร์โทรศัพท์"}</p>
-                          <p><b>ความสำคัญสูงสุด:</b> <span className="text-red-600 font-bold">{p.emergency_type}</span></p>
-                          <p><b>อุปกรณ์ทางการแพทย์:</b> {p.emergency_description || "ไม่ระบุอุปกรณ์"}</p>
-                          <p className="text-[10px] text-slate-500 mt-1">ที่อยู่จดทะเบียน: บ้านเลขที่ {p.address_number} ต.{p.sub_distric} จ.ระยอง</p>
+                      {matchedUserPatients.map((p) => {
+                        const hasActiveOutageReport = reports.some((r) => {
+                          if (r.fixed_status !== "PENDING") return false;
+                          const reporterPhoneClean = (r.reporter_telephone_number || "").trim().replace(/[-\s]/g, "");
+                          const patientPhoneClean = (p.telephone_number || "").trim().replace(/[-\s]/g, "");
+                          const userPhoneClean = (currentPhoneUser || "").trim().replace(/[-\s]/g, "");
                           
-                          {/* Instant Reporting Quick Action Panel */}
-                          <div className="mt-4 pt-3.5 border-t border-dashed border-green-200 bg-violet-50/70 p-3 rounded-lg space-y-2">
-                            <p className="font-extrabold text-xs text-violet-950 flex items-center space-x-1">
-                              <span>⚡</span>
-                              <span>ปุ่มด่วน: แจ้งสถานะกระแสไฟฟ้าที่บ้านของท่านทันที</span>
-                            </p>
-                            <p className="text-[9px] text-slate-500 leading-normal">
-                              คลิกปุ่มด้านล่างเพื่ออัปเดตสถานะกระแสไฟฟ้าตามสิทธิ์ผู้ป่วย โดยระบบจะดึงพิกัดละติจูด/ลองจิจูด ({p.latitude}, {p.longtitude}) และที่อยู่ในการลงทะเบียนของคุณทันทีโดยที่คุณไม่ต้องพิมพ์กรอกฟอร์มใดๆ
-                            </p>
-                            <div className="grid grid-cols-2 gap-2 pt-1.5">
-                              <button
-                                type="button"
-                                disabled={instantReporting}
-                                onClick={() => handleInstantReport(p)}
-                                className="w-full py-2 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 text-white font-extrabold rounded-md shadow hover:shadow-md cursor-pointer text-center text-[10px] md:text-xs transition active:scale-95 uppercase flex items-center justify-center space-x-1"
-                              >
-                                <span>⚠️</span>
-                                <span>{instantReporting ? "กำลังประมวล..." : "ยืนยันแจ้งไฟดับ"}</span>
-                              </button>
-                              <button
-                                type="button"
-                                disabled={instantReporting}
-                                onClick={() => handleInstantResolve(p)}
-                                className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-extrabold rounded-md shadow hover:shadow-md cursor-pointer text-center text-[10px] md:text-xs transition active:scale-95 uppercase flex items-center justify-center space-x-1"
-                              >
-                                <span>✅</span>
-                                <span>{instantReporting ? "กำลังประมวล..." : "ยืนยันไฟปกติ"}</span>
-                              </button>
+                          const matchesPhone = (reporterPhoneClean && (reporterPhoneClean === patientPhoneClean || reporterPhoneClean === userPhoneClean));
+                          const matchesCoords = (r.latitude === p.latitude && r.longtitude === p.longtitude);
+                          return matchesPhone || matchesCoords;
+                        });
+
+                        return (
+                          <div key={p.emer_house_id} className="mt-2 bg-white/90 p-2.5 rounded border border-green-200 text-slate-700">
+                            <p><b>ชื่อผู้ป่วยหลัก:</b> {p.owner_name}</p>
+                            <p><b>เบอร์ติดต่อฉุกเฉิน:</b> {p.telephone_number || "ไม่ได้ลงทะเบียนเบอร์โทรศัพท์"}</p>
+                            <p><b>ความสำคัญสูงสุด:</b> <span className="text-red-600 font-bold">{p.emergency_type}</span></p>
+                            <p><b>อุปกรณ์ทางการแพทย์:</b> {p.emergency_description || "ไม่ระบุอุปกรณ์"}</p>
+                            <p className="text-[10px] text-slate-500 mt-1">ที่อยู่จดทะเบียน: บ้านเลขที่ {p.address_number} ต.{p.sub_distric} จ.ระยอง</p>
+                            
+                            {/* Real-time status badge */}
+                            <div className="mt-3 p-2.5 rounded-xl border flex items-center justify-between bg-slate-50 border-slate-200 shadow-inner">
+                              <span className="font-extrabold text-[11px] text-slate-600">สถานะกระแสไฟฟ้าที่บ้านท่าน:</span>
+                              {hasActiveOutageReport ? (
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-800 animate-pulse border border-rose-300">
+                                  🔴 ไฟดับ (แจ้งเหตุเปิดงานเข้าระบบแล้ว)
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 animate-none">
+                                  🟢 ปกติ (ไม่พบรายงานไฟฟ้าขัดข้อง)
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Instant Reporting Quick Action Panel */}
+                            <div className="mt-4 pt-3.5 border-t border-dashed border-green-200 bg-violet-50/70 p-3 rounded-lg space-y-2">
+                              <p className="font-extrabold text-xs text-violet-950 flex items-center space-x-1">
+                                <span>⚡</span>
+                                <span>ปุ่มด่วน: แจ้งสถานะกระแสไฟฟ้าที่บ้านของท่านทันที</span>
+                              </p>
+                              <p className="text-[9px] text-slate-500 leading-normal">
+                                วันใดกระแสไฟฟ้าขัดข้องหรือกลับมาเป็นปกติ คุณสามารถส่งอัปเดตแจ้ง PEA ผ่านปุ่มด่วนได้ทันทีโดยไม่ต้องสับสน ระบบจะพิจารณาพิกัดจองเตียงผู้ป่วยโดยอัตโนมัติ
+                              </p>
+                              <div className="grid grid-cols-2 gap-2 pt-1.5">
+                                <button
+                                  type="button"
+                                  disabled={instantReporting}
+                                  onClick={() => handleInstantReport(p)}
+                                  className={`w-full py-2 disabled:bg-slate-300 text-white font-extrabold rounded-md shadow hover:shadow-md cursor-pointer text-center text-[10px] md:text-xs transition active:scale-95 uppercase flex items-center justify-center space-x-1 ${
+                                    hasActiveOutageReport ? "bg-rose-400 opacity-60 hover:bg-rose-500 cursor-not-allowed" : "bg-rose-600 hover:bg-rose-700"
+                                  }`}
+                                >
+                                  <span>⚠️</span>
+                                  <span>{instantReporting ? "กำลังประมวล..." : hasActiveOutageReport ? "แจ้งไฟดับซ้ำ" : "ยืนยันแจ้งไฟดับ"}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={instantReporting}
+                                  onClick={() => handleInstantResolve(p)}
+                                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-extrabold rounded-md shadow hover:shadow-md cursor-pointer text-center text-[10px] md:text-xs transition active:scale-95 uppercase flex items-center justify-center space-x-1"
+                                >
+                                  <span>✅</span>
+                                  <span>{instantReporting ? "กำลังประมวล..." : "ยืนยันไฟปกติ"}</span>
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="p-3 bg-amber-50 rounded-lg text-[11px] text-amber-800 border border-amber-200 leading-relaxed font-sans">
@@ -856,7 +1020,7 @@ export default function App() {
 
               {/* List of active blackout/complaints records recorded */}
               <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl space-y-2">
-                <p className="font-bold text-xs text-slate-800">📊 บันทึกเหตุรายงานอุทกภัยและระบบดับไฟ เมืองระยอง:</p>
+                <p className="font-bold text-xs text-slate-800">📊 รายการแจ้งไฟดับ เมืองระยอง:</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-[140px] overflow-y-auto">
                   {reports.map((rep) => (
                     <div
@@ -893,7 +1057,43 @@ export default function App() {
             PAGE 3: ADMIN COMMAND POST Dashboard
             ======================================= */}
         {currentPage === "ADMIN" && (
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-stretch grow animate-fadeIn">
+          <div className="space-y-6 flex flex-col grow animate-fadeIn">
+            
+            {/* Admin tab switcher */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-100 p-2 rounded-xl gap-2 shadow-inner border border-slate-200">
+              <div className="flex space-x-1.5 w-full sm:w-auto">
+                <button
+                  onClick={() => setAdminTab("MAP")}
+                  className={`flex-grow sm:flex-grow-0 flex items-center justify-center space-x-2 px-4 py-2.5 rounded-lg text-xs font-bold transition duration-200 cursor-pointer ${
+                    adminTab === "MAP"
+                      ? "bg-white text-violet-950 shadow-md scale-102 font-extrabold border border-violet-100"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                  }`}
+                >
+                  <span>🕹️</span>
+                  <span>แผงควบคุมหลัก & แผนที่ (Live Control Map)</span>
+                </button>
+                <button
+                  onClick={() => setAdminTab("ANALYTICS")}
+                  className={`flex-grow sm:flex-grow-0 flex items-center justify-center space-x-2 px-4 py-2.5 rounded-lg text-xs font-bold transition duration-200 cursor-pointer ${
+                    adminTab === "ANALYTICS"
+                      ? "bg-white text-violet-950 shadow-md scale-102 font-extrabold border border-violet-100"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                  }`}
+                >
+                  <span>📊</span>
+                  <span>รวมข้อมูลหลังบ้าน & สถิติสะสม ({reports.length})</span>
+                </button>
+              </div>
+
+              <div className="text-[11px] font-bold text-slate-500 bg-white border border-slate-200 px-3 py-1.5 rounded-lg font-mono flex items-center space-x-2 w-full sm:w-auto justify-center sm:justify-start">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>เชื่อมโยงระบบ GIS ทั่วประเทศ</span>
+              </div>
+            </div>
+
+            {adminTab === "MAP" ? (
+              <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-stretch grow animate-fadeIn">
             
             {/* Left section: Metrics, clinical lists, forms, AI analyzer */}
             <div className="xl:col-span-5 flex flex-col space-y-6">
@@ -1036,7 +1236,7 @@ export default function App() {
                       <div className="space-y-0.5">
                         <h3 className="font-extrabold text-slate-900 text-xs flex items-center space-x-1">
                           <span>📋</span>
-                          <span>ทะเบียนผู้ป่วยกลุ่มเสี่ยงทางภูมิศาสตร์ทั้งหมด</span>
+                          <span>ทะเบียนผู้ป่วยติดเตียง หรือ กลุ่มเปราะบาง</span>
                         </h3>
                         <p className="text-[10px] text-slate-500">จัดการข้อมูล ปักหมุด หรือตรวจสอบสถานะอุปกรณ์รักษาระดับชีวิต</p>
                       </div>
@@ -1050,7 +1250,7 @@ export default function App() {
                         className="flex items-center space-x-1 bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow cursor-pointer transition transform active:scale-95 leading-none"
                       >
                         <Plus className="h-3 w-3" />
-                        <span>เพิ่มลงทะเบียนผู้ป่วยคู่เสี่ยงใหม่</span>
+                        <span>ลงทะเบียนผู้ป่วยใหม่ / กลุ่มเปราะบาง</span>
                       </button>
                     </div>
 
@@ -1294,10 +1494,10 @@ export default function App() {
                   <div>
                     <h3 className="font-extrabold text-slate-900 text-xs flex items-center space-x-1">
                       <span>⚡</span>
-                      <span>รายการแจ้งไฟดับ</span>
+                      <span>รายการแจ้งไฟดับเฉพาะวันนี้ (วันต่อวัน)</span>
                     </h3>
                     <p className="text-[10px] text-slate-500">
-                      แอดมินเจ้าหน้าที่สามารถคุมงาน กดแก้ปัญหาสำเร็จ หรือลบประวัติเพื่อล้างจุดแจ้งเตือน
+                      พิจารณาดูแลและสั่งลบประวัติงานซ่อมบำรุงเฉพาะวันปัจจุบันเพื่อให้หน้าจอแผนที่กระชับ
                     </p>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -1309,17 +1509,19 @@ export default function App() {
                       <span>📥</span>
                       <span>ส่งออก Excel</span>
                     </button>
-                    <span className="text-xs bg-violet-100 text-violet-800 font-bold py-1 px-2.5 rounded-full shrink-0">
-                      {reports.length} รายการรวม
+                    <span className="text-xs bg-violet-150 text-violet-800 font-black py-1 px-2.5 rounded-full shrink-0">
+                      {todayReports.length} รายการวันนี้
                     </span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[160px] overflow-y-auto">
-                  {reports.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic text-center col-span-2 py-4 bg-white rounded border border-slate-100 p-2">ไม่มีข้อมูลข้อมูลรายงานไฟดับค้างในฐานขณะนี้</p>
+                  {todayReports.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic text-center col-span-2 py-4 bg-white rounded border border-slate-100 p-2 leading-relaxed">
+                      ไม่มีจุดผู้บริโภครายงานกระแสไฟฟ้าขัดข้องของวันนี้ (ประวติทั่วไปถูกซ่อนแล้ว)
+                    </p>
                   ) : (
-                    reports.map((rep) => (
+                    todayReports.map((rep) => (
                       <div
                         key={rep.report_id}
                         className={`p-3 rounded-lg border text-xs flex justify-between items-center transition ${
@@ -1362,6 +1564,248 @@ export default function App() {
                 </div>
               </div>
 
+            </div>
+          </div>
+        ) : (
+          /* ========================================================
+             📊 SYSTEM SUB-PAGE: BACKEND HISTORIC COMPILATION & STATISTICS
+             ======================================================== */
+          <div className="space-y-6 animate-fadeIn grow flex flex-col">
+            
+            {/* Header info bar */}
+            <div className="bg-slate-900 border border-slate-800 text-white rounded-2xl p-6 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div className="space-y-1">
+                <h2 className="text-lg md:text-xl font-black flex items-center space-x-2 text-white">
+                  <span className="text-yellow-400">📊</span>
+                  <span>ระบบรวบรวมข้อมูลหลังบ้านและสถิติสะสม เมืองระยอง</span>
+                </h2>
+                <p className="text-slate-400 text-xs font-medium">
+                  สรุปผลรายละเอียดความถี่ จำนวนประวัติการดับไฟและระดับความเปราะบางของผู้ป่วยสะสมสำหรับผู้บริหาร PEA
+                </p>
+              </div>
+              
+              <button
+                onClick={handleExportReportsToExcel}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow hover:scale-[1.03] active:scale-95 transition cursor-pointer flex items-center space-x-1.5"
+              >
+                <span>📥 ส่งออกรายงานสารสนเทศหมดประวัติ (.CSV)</span>
+              </button>
+            </div>
+
+            {/* Metrics cards grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              
+              <div className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl p-5 shadow-sm text-slate-800 space-y-2 relative overflow-hidden transition-all duration-200">
+                <div className="absolute right-3 top-3 h-10 w-10 bg-violet-50 rounded-full flex items-center justify-center text-violet-500 font-bold text-lg">💡</div>
+                <p className="text-slate-400 font-black text-[10px] uppercase tracking-wider">จำนวนผู้แจ้งไฟดับสะสมทั้งหมด</p>
+                <p className="text-3xl font-black text-slate-800">{reports.length} <span className="text-xs text-slate-500 font-normal">ครั้ง</span></p>
+                <div className="flex items-center space-x-1 text-[10px] text-emerald-600 font-semibold progress-green">
+                  <span>✓ รวมบันทึกฐานข้อมูลระบบความคุม</span>
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl p-5 shadow-sm text-slate-800 space-y-2 relative overflow-hidden transition-all duration-200">
+                <div className="absolute right-3 top-3 h-10 w-10 bg-rose-50 rounded-full flex items-center justify-center text-rose-600 font-bold text-lg">⚡</div>
+                <p className="text-slate-400 font-black text-[10px] uppercase tracking-wider">อยู่ระหว่างซ่อมบำรุงในระบบ</p>
+                <p className="text-3xl font-black text-rose-600">
+                  {reports.filter(r => r.fixed_status !== "RESOLVED").length} <span className="text-xs text-slate-500 font-normal">งาน</span>
+                </p>
+                <div className="flex items-center space-x-1 text-[10px] text-rose-500 font-bold">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                  <span>รอทีมงานเข้าทำการซ่อมบำรุงกู้ภัย</span>
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl p-5 shadow-sm text-slate-800 space-y-2 relative overflow-hidden transition-all duration-200">
+                <div className="absolute right-3 top-3 h-10 w-10 bg-emerald-50 rounded-full flex items-center justify-center text-emerald-600 font-bold text-lg">✓</div>
+                <p className="text-slate-400 font-black text-[10px] uppercase tracking-wider">จ่ายไฟฟ้าคืนกระแสสำเร็จแล้ว</p>
+                <p className="text-3xl font-black text-emerald-600">
+                  {reports.filter(r => r.fixed_status === "RESOLVED").length} <span className="text-xs text-slate-500 font-normal">งาน</span>
+                </p>
+                <div className="flex items-center space-x-1 text-[10px] text-emerald-600 font-semibold">
+                  <span>✓ คิดเป็นอัตราความสำเร็จแผ่ขยายดีเยี่ยม</span>
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl p-5 shadow-sm text-slate-800 space-y-2 relative overflow-hidden transition-all duration-200">
+                <div className="absolute right-3 top-3 h-10 w-10 bg-teal-50 rounded-full flex items-center justify-center text-teal-600 font-bold text-lg">👵</div>
+                <p className="text-slate-400 font-black text-[10px] uppercase tracking-wider">ทะเบียนผู้ป่วยกลุ่มเปราะบางรวม</p>
+                <p className="text-3xl font-black text-violet-750">{patients.length} <span className="text-xs text-slate-500 font-normal">ชีวิต</span></p>
+                <div className="flex items-center space-x-1 text-[10px] text-slate-500 font-semibold">
+                  <span>คุ้มครอง 24 ชั่วโมง ตลอดพิกัด</span>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Layout division charts & list logs database and subdistricts */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+              
+              {/* Tambon density distributions */}
+              <div className="lg:col-span-5 bg-slate-50 border border-slate-200 rounded-2xl p-5 flex flex-col space-y-4">
+                <div className="pb-2 border-b border-rose-100">
+                  <h3 className="font-extrabold text-slate-900 text-sm flex items-center space-x-1 bg-rose-50 text-rose-900 p-2 rounded">
+                    <span>🏢</span>
+                    <span>รายงานประมวลไฟฟ้าดับแบ่งรายตำบล (Sub-districts)</span>
+                  </h3>
+                  <p className="text-[10px] text-slate-500 mt-1">สัดส่วนเหตุการณ์ไฟดับที่เคยป้อนเข้าระบบ (สะสมทุกวัน) เพื่อตรวจหาสายป้อนย่อยที่เปราะบาง</p>
+                </div>
+
+                <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1 grow flex flex-col justify-center">
+                  {(() => {
+                    const tambonDensities: { [key: string]: number } = {};
+                    reports.forEach((r) => {
+                      const name = (r.sub_distric || "ไม่ระบุตำบล").trim();
+                      tambonDensities[name] = (tambonDensities[name] || 0) + 1;
+                    });
+                    const sortedTambons = Object.entries(tambonDensities).sort((a, b) => b[1] - a[1]);
+                    const maxVal = Math.max(...Object.values(tambonDensities), 1);
+
+                    if (sortedTambons.length === 0) {
+                      return (
+                        <p className="text-slate-400 italic font-mono text-center py-10">ไม่มีรายละเอียดการพังเสียหายในระบบ</p>
+                      );
+                    }
+
+                    return sortedTambons.map(([tName, tCount]) => {
+                      const percentage = Math.round((tCount / maxVal) * 100);
+                      return (
+                        <div key={tName} className="space-y-1">
+                          <div className="flex justify-between text-xs font-black text-slate-700">
+                            <span>ตำบล{tName}</span>
+                            <span className="text-rose-600 bg-rose-100/50 px-2 rounded font-black">{tCount} ครั้ง</span>
+                          </div>
+                          <div className="w-full bg-slate-200 h-3.5 rounded-full overflow-hidden border border-slate-300">
+                            <div
+                              className="bg-gradient-to-r from-violet-600 to-rose-500 h-full rounded-full transition-all duration-300"
+                              style={{ width: `${percentage}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+
+              {/* Comprehensive historic log table of all outages ever recorded */}
+              <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-5 flex flex-col space-y-4 shadow-sm">
+                <div className="pb-2 border-b border-slate-100 flex justify-between items-center bg-slate-50 p-2.5 rounded-xl">
+                  <div>
+                    <h3 className="font-extrabold text-slate-900 text-xs flex items-center space-x-1.5">
+                      <span>👁️‍🗨️</span>
+                      <span>ประวัติบันทึกสารสนเทศกระแสไฟดับลึก (Historical Log)</span>
+                    </h3>
+                    <p className="text-[10px] text-slate-500">รวมรวมทุกประวัติเหตุการณ์ไฟฟ้าดับสะสมทั้งหมดเพื่อประโยชน์ทางสถิติวิศวกรรม</p>
+                  </div>
+                  <span className="text-xs bg-slate-900 text-amber-400 font-mono px-3 py-1 rounded shadow">
+                    สะสม {reports.length} รายการ
+                  </span>
+                </div>
+
+                <div className="space-y-2.5 max-h-[350px] overflow-y-auto pr-1 grow">
+                  {reports.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic text-center py-20">ไม่มีข้อมูลบันทึกในระบบศูนย์ควบคุมความเสียหาย</p>
+                  ) : (
+                    reports.map((rep) => (
+                      <div
+                        key={rep.report_id}
+                        className={`p-3 rounded-xl border text-xs flex justify-between items-start transition hover:border-slate-300 ${
+                          rep.fixed_status === "RESOLVED"
+                            ? "bg-slate-50 border-slate-200 text-slate-500 opacity-80"
+                            : "bg-white border-rose-200 shadow-sm text-slate-800"
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <p className="font-black text-slate-800 text-[12.5px] flex items-center space-x-1.5">
+                            <span>{rep.fixed_status === "RESOLVED" ? "✓" : "⚡"}</span>
+                            <span>{rep.report_type} - ม.{rep.address_number} ต.{rep.sub_distric}</span>
+                          </p>
+                          <p className="text-[10.5px] font-medium text-slate-600">
+                            <b>📞 ผู้ร้องขอ:</b> {rep.reporter_name || "ไม่ประสงค์ออกนาม"} (เบอร์โทร: <span className="text-violet-900 font-bold">{rep.reporter_telephone_number}</span>)
+                          </p>
+                          <p className="text-[9.5px] text-slate-400 font-mono">วันที่รับเรื่อง: {new Date(rep.created_at).toLocaleString("th-TH")}</p>
+                        </div>
+
+                        <div className="flex flex-col items-end space-y-2 shrink-0 ml-2">
+                          <span className={`text-[9.5px] font-black py-1 px-2.5 rounded-full uppercase leading-none border ${
+                            rep.fixed_status === "RESOLVED"
+                              ? "bg-green-100 text-green-800 border-green-200"
+                              : "bg-rose-100 text-rose-800 border-rose-200 animate-pulse"
+                          }`}>
+                            {rep.fixed_status === "RESOLVED" ? "ปิดเคสสำเร็จ" : "ไฟดับค้างงาน"}
+                          </span>
+                          
+                          <button
+                            onClick={() => handleDeleteReport(rep.report_id)}
+                            className="text-[10px] text-rose-600 hover:text-rose-105 hover:bg-rose-100 border border-transparent hover:border-rose-200 p-1 rounded-md transition duration-150 flex items-center space-x-0.5"
+                            title="ลบรายงานนี้ออกจากคลังถาวร"
+                          >
+                            <span>🗑️</span>
+                            <span>ลบประวัติ</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+
+        {/* New Outage Warning Popup Modal */}
+        {newOutageAlert && (
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-fadeIn">
+            <div className="bg-white border-2 border-rose-600 rounded-2xl p-6 max-w-md w-full shadow-2xl relative space-y-4 animate-scaleUp">
+              <div className="flex items-center space-x-2 text-rose-600">
+                <span className="text-3xl animate-bounce">🚨</span>
+                <h3 className="text-lg font-black tracking-tight text-slate-900">ตรวจพบผู้แจ้งไฟดับใหม่ล่าสุด!</h3>
+              </div>
+              
+              <div className="p-3.5 bg-rose-50 border border-rose-100 rounded-xl space-y-2 text-xs text-slate-700 font-sans">
+                <p><b>📍 สถานที่/พิกัด:</b> ต.{newOutageAlert.sub_distric} อ.{newOutageAlert.distric} จ.ระยอง</p>
+                <p><b>📋 ปัญหาขัดข้อง:</b> <span className="text-red-700 font-black">{newOutageAlert.report_type}</span></p>
+                {newOutageAlert.address_number && <p><b>🏠 รายละเอียดบ้านพัก:</b> {newOutageAlert.address_number}</p>}
+                <p><b>👤 ผู้แจ้ง:</b> {newOutageAlert.reporter_name || "ไม่ประสงค์ออกนาม"} ({newOutageAlert.reporter_telephone_number})</p>
+                <p><b>⏰ เวลาที่รับเรื่อง:</b> {new Date(newOutageAlert.created_at).toLocaleString("th-TH")}</p>
+              </div>
+
+              <div className="text-[10px] text-amber-600 font-bold bg-amber-50 p-2.5 rounded border border-amber-200 font-sans">
+                ⚠️ เสียงสัญญาณเตือนร้องยาว 5 วินาทีเรียบร้อยแล้ว กรุณาสั่งจัดการทีมช่างเข้าพื้นที่จุดแจ้งเหตุแก้ไขโดยเร็ว
+              </div>
+
+              <div className="flex space-x-2 font-sans">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewOutageAlert(null);
+                    stopSiren();
+                  }}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-lg text-xs transition cursor-pointer"
+                >
+                  รับทราบ & ปิดกล่อง
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (newOutageAlert.latitude && newOutageAlert.longtitude) {
+                      setOutageZoneCenter({
+                        lat: parseFloat(newOutageAlert.latitude),
+                        lng: parseFloat(newOutageAlert.longtitude)
+                      });
+                    }
+                    setNewOutageAlert(null);
+                    stopSiren();
+                  }}
+                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-xs transition cursor-pointer animate-pulse"
+                >
+                  ส่องจุดเกิดเหตุ 📌
+                </button>
+              </div>
             </div>
           </div>
         )}

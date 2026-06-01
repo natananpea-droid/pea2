@@ -20,11 +20,12 @@ const sql = postgres(dbUrl, {
   ssl: "require", // Supabase requires SSL
 });
 
-// Auto-migrate database to add telephone_number if it is missing
+// Auto-migrate database to add telephone_number and caregiver_name if they are missing
 async function runMigrations() {
   try {
     await sql`ALTER TABLE emergency_house ADD COLUMN IF NOT EXISTS telephone_number VARCHAR(255)`;
-    console.log("Migration: 'telephone_number' column on emergency_house checked/added successfully.");
+    await sql`ALTER TABLE emergency_house ADD COLUMN IF NOT EXISTS caregiver_name VARCHAR(255)`;
+    console.log("Migration: 'telephone_number' and 'caregiver_name' columns on emergency_house checked/added successfully.");
   } catch (err) {
     console.warn("Migration warning (might be lack of alter permissions, or column already exists):", err);
   }
@@ -172,10 +173,17 @@ app.put("/api/reports/:id/resolve", verifyAdminPin, async (req, res) => {
 app.delete("/api/reports/:id", verifyAdminPin, async (req, res) => {
   try {
     const { id } = req.params;
-    await sql`
-      DELETE FROM electricity_down_report 
-      WHERE report_id = ${Number(id)};
-    `;
+    try {
+      await sql`
+        DELETE FROM electricity_down_report 
+        WHERE report_id = ${Number(id)};
+      `;
+    } catch {
+      await sql`
+        DELETE FROM electricity_down_report 
+        WHERE report_id = ${String(id)};
+      `;
+    }
     res.json({ success: true, message: "ลบรายงานผู้รับแจ้งเรียบร้อยแล้ว" });
   } catch (err: any) {
     console.error("DELETE /api/reports/:id error:", err);
@@ -224,6 +232,7 @@ app.post("/api/patients", verifyAdminPin, async (req, res) => {
       emergency_description,
       status,
       telephone_number,
+      caregiver_name,
     } = req.body;
 
     await sql`
@@ -244,7 +253,8 @@ app.post("/api/patients", verifyAdminPin, async (req, res) => {
         emergency_type,
         emergency_description,
         status,
-        telephone_number
+        telephone_number,
+        caregiver_name
       ) VALUES (
         ${emer_house_id},
         ${ca_number ? Number(ca_number) : null},
@@ -262,7 +272,8 @@ app.post("/api/patients", verifyAdminPin, async (req, res) => {
         ${emergency_type || 'LOW'},
         ${emergency_description || null},
         ${status || 'ACTIVE'},
-        ${telephone_number || null}
+        ${telephone_number || null},
+        ${caregiver_name || null}
       )
     `;
 
@@ -294,6 +305,7 @@ app.put("/api/patients/:id", verifyAdminPin, async (req, res) => {
       emergency_description,
       status,
       telephone_number,
+      caregiver_name,
     } = req.body;
 
     await sql`
@@ -313,7 +325,8 @@ app.put("/api/patients/:id", verifyAdminPin, async (req, res) => {
         emergency_type = ${emergency_type || 'LOW'},
         emergency_description = ${emergency_description || null},
         status = ${status || 'ACTIVE'},
-        telephone_number = ${telephone_number || null}
+        telephone_number = ${telephone_number || null},
+        caregiver_name = ${caregiver_name || null}
       WHERE emer_house_id = ${Number(id)}
     `;
 
@@ -328,10 +341,17 @@ app.put("/api/patients/:id", verifyAdminPin, async (req, res) => {
 app.delete("/api/patients/:id", verifyAdminPin, async (req, res) => {
   try {
     const { id } = req.params;
-    await sql`
-      DELETE FROM emergency_house 
-      WHERE emer_house_id = ${Number(id)};
-    `;
+    try {
+      await sql`
+        DELETE FROM emergency_house 
+        WHERE emer_house_id = ${Number(id)};
+      `;
+    } catch {
+      await sql`
+        DELETE FROM emergency_house 
+        WHERE emer_house_id = ${String(id)};
+      `;
+    }
     res.json({ success: true, message: "ลบข้อมูลผู้ป่วยกลุ่มเปราะบางเรียบร้อยแล้ว" });
   } catch (err: any) {
     console.error("DELETE /api/patients/:id error:", err);

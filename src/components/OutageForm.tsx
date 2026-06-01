@@ -18,7 +18,7 @@ export default function OutageForm({
   const [formData, setFormData] = useState({
     reporter_telephone_number: reporterPhone,
     reporter_name: "",
-    report_type: "ไฟดับ",
+    report_type: "",
     address_number: "",
     soi: "",
     road: "",
@@ -78,6 +78,33 @@ export default function OutageForm({
     e.preventDefault();
     setSuccessMsg(null);
     setErrorMsg(null);
+
+    // Thai Form validation checks
+    if (!formData.reporter_name.trim()) {
+      setErrorMsg("กรุณากรอกข้อมูลให้ครบถ้วน: ระบุชื่อผู้แจ้งรายงาน");
+      return;
+    }
+    if (!formData.reporter_telephone_number.trim()) {
+      setErrorMsg("กรุณากรอกข้อมูลให้ครบถ้วน: ระบุเบอร์โทรศัพท์ติดต่อกลับ");
+      return;
+    }
+    if (!formData.report_type.trim()) {
+      setErrorMsg("กรุณากรอกข้อมูลให้ครบถ้วน: ระบุรายละเอียดอาการ/สาเหตุของปัญหาไฟตกดับ");
+      return;
+    }
+    if (!formData.address_number.trim()) {
+      setErrorMsg("กรุณากรอกข้อมูลให้ครบถ้วน: ระบุรายละเอียดบ้านเลขที่/พิกัดสถานที่");
+      return;
+    }
+    if (!formData.sub_distric.trim()) {
+      setErrorMsg("กรุณากรอกข้อมูลให้ครบถ้วน: ระบุตำบลผู้รับเหตุ");
+      return;
+    }
+    if (!formData.latitude.trim() || !formData.longtitude.trim()) {
+      setErrorMsg("กรุณากรอกข้อมูลให้ครบถ้วน: ระบุพิกัดละติจูดและลองจิจูด (คุณสามารถจิ้มตำแหน่งง่ายๆ บนแผนที่แถบข้าง)");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -98,7 +125,7 @@ export default function OutageForm({
       setFormData({
         reporter_telephone_number: reporterPhone,
         reporter_name: "",
-        report_type: "ไฟดับ",
+        report_type: "",
         address_number: "",
         soi: "",
         road: "",
@@ -164,18 +191,16 @@ export default function OutageForm({
         </div>
 
         <div>
-          <label className="block text-slate-700 font-bold mb-1">ประเภทเหตุการณ์ขัดข้อง</label>
-          <select
+          <label className="block text-slate-700 font-bold mb-1">ระบุรายละเอียด/สาเหตุของปัญหาไฟตกดับ (กรอกข้อมูลเอง)</label>
+          <input
+            type="text"
             name="report_type"
             value={formData.report_type}
             onChange={handleChange}
-            className="w-full p-2 bg-white border border-slate-300 rounded font-bold"
-          >
-            <option value="ไฟดับ">⚡ ไฟดับวงกว้าง (Blackout)</option>
-            <option value="ไฟตก">📉 ไฟตกต่อเนื่อง (Voltage Drop)</option>
-            <option value="หม้อแปลงชำรุด">💥 หม้อแปลงขัดข้อง/ชำรุด</option>
-            <option value="น้ำท่วม">🌊 อุทกภัย/น้ำท่วมเป็นอันตรายระบบไฟ</option>
-          </select>
+            required
+            placeholder="เช่น หม้อแปลงระเบิดหน้าปากซอย, ไฟตกตลอดทั้งบ่าย, หรือสายไฟขาดเป็นอันตราย"
+            className="w-full p-2 bg-white border border-slate-300 rounded"
+          />
         </div>
 
         {/* Address sub-form */}
