@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import SurveillanceMap from "./components/SurveillanceMap";
 import OutageForm from "./components/OutageForm";
 import PatientForm from "./components/PatientForm";
-import ClinicalAnalyzer from "./components/ClinicalAnalyzer";
 import { Patient, OutageReport, AccountType } from "./types";
 import { calculateHaversineDistance, formatDistance } from "./utils/geo";
 import {
@@ -1198,37 +1197,6 @@ export default function App() {
               {/* Add / Edit Patient CRUD Form controller */}
               {showPatientForm ? (
                 <div className="animate-slideUp">
-                  {/* AI Smart Analyzer tool integrated directly ontop of patient registration inside form overlay! */}
-                  <div className="mb-4">
-                    <ClinicalAnalyzer
-                      onAnalysisCompleted={(priority, reason) => {
-                        // Autofill values in the child component form data!
-                        // In React, we pass down dynamic handles
-                        if (editorMapSelectedCoords) {
-                          // Trigger update inside form
-                        }
-                        const btn = document.getElementById("clinical-trigger");
-                        // We use ref interaction or simply provide state binding!
-                        alert(`วิเคราะห์ผลสำเร็จ: จัดกลุ่มในประเภท ${priority}\nคำสนับสนุน: ${reason}\n\nระบบจดจำพารามิเตอร์แล้ว โปรดระบุชื่อผู้ดูแลเพื่อบันทึกพิกัดลงฐานข้อมูล`);
-                        
-                        // Set fields dynamically via internal function
-                        const target = document.getElementsByName("emergency_type")[0] as HTMLSelectElement;
-                        if (target) {
-                          target.value = priority;
-                          // trigger event handler trigger
-                          const event = new Event('change', { bubbles: true });
-                          target.dispatchEvent(event);
-                        }
-                        const desc = document.getElementsByName("emergency_description")[0] as HTMLTextAreaElement;
-                        if (desc) {
-                          desc.value = `[ประเมินระดับอัจฉริยะแบบ ${priority}]: ${reason}`;
-                          const event = new Event('change', { bubbles: true });
-                          desc.dispatchEvent(event);
-                        }
-                      }}
-                    />
-                  </div>
-
                   <PatientForm
                     initialPatient={editingPatient}
                     onSubmitSuccess={() => {
@@ -1530,7 +1498,7 @@ export default function App() {
               {/* Main Map Block */}
               <div className="grow rounded-xl overflow-hidden shadow-sm h-[480px]">
                 <SurveillanceMap
-                  patients={patients}
+                  patients={computedPatients}
                   reports={reports}
                   showPatients={true} // ADMIN HAS EXPLICIT ACCESS TO DETECT DISASTERS
                   onMapClick={handleMapClick}

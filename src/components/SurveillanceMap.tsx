@@ -191,32 +191,44 @@ export default function SurveillanceMap({
 
         // Custom priority icons
         let colorClass = "bg-emerald-500 ring-emerald-300";
-        let iconChar = "L"; // Low
         let priorityLabel = "ระดับต่ำ (เตียงทั่วไป)";
         let pulseAnim = "";
 
         if (p.emergency_type === "CRITICAL") {
           colorClass = "bg-red-600 ring-red-400";
-          iconChar = "⚡ RED";
           priorityLabel = "⚠️ วิกฤต (เครื่องช่วยหายใจ)";
-          pulseAnim = "<span class='animate-ping absolute inline-flex h-8 w-8 rounded-full bg-red-500 opacity-75'></span>";
+          if (p.isAffected) {
+            pulseAnim = "<span class='animate-ping absolute inline-flex h-8 w-8 rounded-full bg-red-500 opacity-75'></span>";
+          }
         } else if (p.emergency_type === "HIGH") {
           colorClass = "bg-orange-500 ring-orange-300";
-          iconChar = "ORANGE";
           priorityLabel = "เร่งด่วนสูง (เครื่องผลิตออกซิเจน/ดูดเสมหะ)";
-          pulseAnim = "<span class='animate-ping absolute inline-flex h-6 w-6 rounded-full bg-orange-400 opacity-70'></span>";
+          if (p.isAffected) {
+            pulseAnim = "<span class='animate-ping absolute inline-flex h-6 w-6 rounded-full bg-orange-400 opacity-70'></span>";
+          }
         } else if (p.emergency_type === "MEDIUM") {
           colorClass = "bg-yellow-500 ring-yellow-300";
-          iconChar = "YELLOW";
           priorityLabel = "ปานกลาง (เตียงไฟฟ้า/ที่นอนลม)";
-          pulseAnim = "<span class='animate-pulse absolute inline-flex h-5 w-5 rounded-full bg-yellow-400 opacity-60'></span>";
+          if (p.isAffected) {
+            pulseAnim = "<span class='animate-pulse absolute inline-flex h-5 w-5 rounded-full bg-yellow-400 opacity-60'></span>";
+          }
+        } else {
+          if (p.isAffected) {
+            pulseAnim = "<span class='animate-pulse absolute inline-flex h-5 w-5 rounded-full bg-emerald-400 opacity-60'></span>";
+          }
         }
+
+        // Small indicator of power status on the map icon itself for easy tracking!
+        const statusBadge = p.isAffected 
+          ? `<span class="absolute -top-1.5 -right-1.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-red-600 border border-white text-[9px] shadow animate-bounce">🔴</span>`
+          : `<span class="absolute -top-1.5 -right-1.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-emerald-600 border border-white text-[9px] shadow">🟢</span>`;
 
         const patientIcon = L.divIcon({
           html: `<div class="relative flex items-center justify-center text-white">
             ${pulseAnim}
             <div class="relative flex items-center justify-center rounded-full h-7 w-7 text-[10px] font-bold ${colorClass} text-center shadow-lg border border-white font-mono scale-110">
               👶
+              ${statusBadge}
             </div>
           </div>`,
           className: "custom-patient-icon",
@@ -224,18 +236,27 @@ export default function SurveillanceMap({
           iconAnchor: [14, 14],
         });
 
-        // Popup content
+        // Popup content with clear power status display
+        const electricityStatusHtml = p.isAffected
+          ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200 animate-pulse">🔴 ไฟฟ้าขัดข้อง / ไฟดับ</span>`
+          : `<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">🟢 ระบบไฟฟ้าปกติ</span>`;
+
         const popupHtml = `
-          <div class="p-1 font-sans text-xs">
-            <div class="flex items-center space-x-1 mb-1 border-b border-slate-100 pb-1">
-              <span class="text-base">👤</span>
-              <p class="font-bold text-slate-800 text-sm">${p.owner_name}</p>
+          <div class="p-1 font-sans text-xs min-w-[200px]">
+            <div class="flex items-center justify-between mb-1.5 border-b border-slate-100 pb-1.5">
+              <div class="flex items-center space-x-1">
+                <span class="text-base">👤</span>
+                <p class="font-bold text-slate-800 text-sm">${p.owner_name}</p>
+              </div>
             </div>
-            <p class="text-xs text-slate-600 mt-1"><b>ความสำคัญ:</b> <span class="font-bold text-red-600">${priorityLabel}</span></p>
+            <div class="mb-2">
+              ${electricityStatusHtml}
+            </div>
+            <p class="text-xs text-slate-600 mt-1"><b>ระดับความเสี่ยง:</b> <span class="font-bold text-slate-800">${priorityLabel}</span></p>
             <p class="text-xs text-slate-600 mt-0.5"><b>รหัสบ้านเลขที่:</b> ${p.address_number || "-"}</p>
             <p class="text-xs text-slate-600"><b>หมายเลขผู้ใช้ไฟ (PEA):</b> ${p.pea_number || "-"}</p>
             <p class="text-xs text-slate-600"><b>เบอร์โทรศัพท์:</b> ${p.telephone_number || "-"}</p>
-            <p class="text-xs text-slate-600 block mt-1 line-clamp-2 italic bg-slate-50 p-1 rounded">"${p.emergency_description || "ไม่มีรายละเอียดอุปกรณ์พิเศษ"}"</p>
+            <p class="text-xs text-slate-600 block mt-1.5 line-clamp-2 italic bg-slate-50 p-1 rounded">"${p.emergency_description || "ไม่มีรายละเอียดอุปกรณ์พิเศษ"}"</p>
           </div>
         `;
 

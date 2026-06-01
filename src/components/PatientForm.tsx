@@ -20,10 +20,6 @@ export default function PatientForm({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // AI Risk assessment states
-  const [aiAnalyzing, setAiAnalyzing] = useState(false);
-  const [aiResult, setAiResult] = useState<{ priority: string; reason: string } | null>(null);
-
   // Form State Fields
   const [formData, setFormData] = useState({
     owner_name: "",
@@ -86,65 +82,6 @@ export default function PatientForm({
   ) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleAIAnalyze = async () => {
-    if (!formData.emergency_description.trim()) {
-      setErrorMsg("กรุณากรอกรายละเอียดรายละเอียดยี่ห้อ อุปกรณ์ทางการแพทย์ที่ต้องใช้ หรือภาวะครรภ์/อาการของผู้ป่วยติดเตียง ก่อนทำการให้ AI ช่วยประเมิน");
-      return;
-    }
-    setErrorMsg(null);
-    setAiAnalyzing(true);
-    setAiResult(null);
-
-    try {
-      const res = await fetch("/api/analyze-priority", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ description: formData.emergency_description }),
-      });
-
-      if (!res.ok) {
-        let errMsg = "ล้มเหลวในการส่งข้อมูลวิเคราะห์ระดับเตียงไปยังระบบอัจฉริยะ";
-        try {
-          const errData = await res.json();
-          errMsg = errData.error || errMsg;
-        } catch {
-          try {
-            const rawText = await res.text();
-            if (rawText) {
-              const cleaned = rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-              errMsg = cleaned.substring(0, 150) || errMsg;
-            }
-          } catch {}
-        }
-        throw new Error(errMsg);
-      }
-
-      let data;
-      try {
-        data = await res.json();
-      } catch (jsonErr: any) {
-        throw new Error("ระบบวิเคราะห์ผลลัพธ์ผิดพลาดเนื่องจากคำตอบไม่ได้อยู่ในรูปแบบ JSON: " + jsonErr.message);
-      }
-
-      setAiResult({
-        priority: data.priority,
-        reason: data.reason,
-      });
-
-      // Automatically update emergency priority level dynamically
-      setFormData((prev) => ({
-        ...prev,
-        emergency_type: data.priority,
-      }));
-    } catch (err: any) {
-      setErrorMsg("เกิดข้อผิดพลาดในการเชื่อมต่อคอร์สมอง AI: " + err.message);
-    } finally {
-      setAiAnalyzing(false);
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -492,24 +429,7 @@ export default function PatientForm({
                   : "👤 LOW (เสี่ยงน้อย/ทั่วไป)"}
               </span>
             </div>
-
-            <button
-              type="button"
-              onClick={handleAIAnalyze}
-              disabled={aiAnalyzing}
-              className="flex items-center justify-center space-x-1 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-300 text-white font-extrabold rounded-lg cursor-pointer transition active:scale-95 text-xs shadow-sm shadow-indigo-100"
-            >
-              <span>{aiAnalyzing ? "⏳ AI กำลังอ่านข้อมูลและวินิจฉัย..." : "🤖 ส่งให้ AI ประเมินความเสี่ยงสุภาพ (Auto)"}</span>
-            </button>
           </div>
-
-          {/* AI Result indicator details panel */}
-          {aiResult && (
-            <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-lg space-y-1 animate-fadeIn">
-              <span className="text-[10px] text-indigo-900 font-extrabold block">⚡ ผลสรุปคำนวณสภาวะเร่งด่วนโดยระบบ AI อัจฉริยะ:</span>
-              <p className="text-[11px] text-slate-700 font-medium leading-relaxed">{aiResult.reason}</p>
-            </div>
-          )}
         </div>
 
         {/* Security / Admin Verification Code input */}
