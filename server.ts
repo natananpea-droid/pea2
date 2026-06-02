@@ -20,12 +20,11 @@ const sql = postgres(dbUrl, {
   ssl: "require", // Supabase requires SSL
 });
 
-// Auto-migrate database to add telephone_number and caregiver_name if they are missing
+// Auto-migrate database to add telephone_number if it is missing
 async function runMigrations() {
   try {
     await sql`ALTER TABLE emergency_house ADD COLUMN IF NOT EXISTS telephone_number VARCHAR(255)`;
-    await sql`ALTER TABLE emergency_house ADD COLUMN IF NOT EXISTS caregiver_name VARCHAR(255)`;
-    console.log("Migration: 'telephone_number' and 'caregiver_name' columns on emergency_house checked/added successfully.");
+    console.log("Migration: 'telephone_number' column on emergency_house checked/added successfully.");
   } catch (err) {
     console.warn("Migration warning (might be lack of alter permissions, or column already exists):", err);
   }
@@ -63,12 +62,7 @@ console.log("Gemini API Status on server:", ai ? "READY" : "NOT READY (Missing k
 
 // PIN Verification Middleware for Admin-write endpoints
 function verifyAdminPin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const incomingPIN = 
-    req.headers["x-admin-pin"] || 
-    req.headers["X-Admin-PIN"] || 
-    req.headers["x-admin-pin".toLowerCase()] ||
-    (req.body ? req.body.pin : undefined) || 
-    req.query.pin;
+  const incomingPIN = req.headers["x-admin-pin"] || (req.body ? req.body.pin : undefined) || req.query.pin;
   if (incomingPIN === "h02101") {
     next();
   } else {
@@ -162,24 +156,11 @@ app.post("/api/reports", async (req, res) => {
 app.put("/api/reports/:id/resolve", verifyAdminPin, async (req, res) => {
   try {
     const { id } = req.params;
-    let targetId: bigint;
-    try {
-      targetId = BigInt(id);
-    } catch {
-      return res.status(400).json({ error: "รหัสรายงานไม่ถูกต้องกรุณาตรวจสอบ" });
-    }
-
-    const result = await sql`
+    await sql`
       UPDATE electricity_down_report 
       SET fixed_status = 'RESOLVED' 
-      WHERE report_id = ${targetId as any}
-      RETURNING report_id;
+      WHERE report_id = ${id};
     `;
-
-    if (result.count === 0) {
-      return res.status(404).json({ error: "ไม่พบข้อมูลรายงานที่ต้องการอัปเดต หรือรหัสนั้นถูกลบไปแล้ว" });
-    }
-
     res.json({ success: true, message: "ปรับปรุงสถานะเป็นแก้ไขเรียบร้อยแล้ว" });
   } catch (err: any) {
     console.error("PUT /api/reports/:id/resolve error:", err);
@@ -191,23 +172,10 @@ app.put("/api/reports/:id/resolve", verifyAdminPin, async (req, res) => {
 app.delete("/api/reports/:id", verifyAdminPin, async (req, res) => {
   try {
     const { id } = req.params;
-    let targetId: bigint;
-    try {
-      targetId = BigInt(id);
-    } catch {
-      return res.status(400).json({ error: "รหัสรายงานไม่ถูกต้องกรุณาตรวจสอบ" });
-    }
-
-    const result = await sql`
+    await sql`
       DELETE FROM electricity_down_report 
-      WHERE report_id = ${targetId as any}
-      RETURNING report_id;
+      WHERE report_id = ${Number(id)};
     `;
-
-    if (result.count === 0) {
-      return res.status(404).json({ error: "ไม่พบข้อมูลรายงานที่ต้องการลบ" });
-    }
-
     res.json({ success: true, message: "ลบรายงานผู้รับแจ้งเรียบร้อยแล้ว" });
   } catch (err: any) {
     console.error("DELETE /api/reports/:id error:", err);
@@ -256,7 +224,6 @@ app.post("/api/patients", verifyAdminPin, async (req, res) => {
       emergency_description,
       status,
       telephone_number,
-      caregiver_name,
     } = req.body;
 
     await sql`
@@ -277,8 +244,7 @@ app.post("/api/patients", verifyAdminPin, async (req, res) => {
         emergency_type,
         emergency_description,
         status,
-        telephone_number,
-        caregiver_name
+        telephone_number
       ) VALUES (
         ${emer_house_id},
         ${ca_number ? Number(ca_number) : null},
@@ -296,8 +262,7 @@ app.post("/api/patients", verifyAdminPin, async (req, res) => {
         ${emergency_type || 'LOW'},
         ${emergency_description || null},
         ${status || 'ACTIVE'},
-        ${telephone_number || null},
-        ${caregiver_name || null}
+        ${telephone_number || null}
       )
     `;
 
@@ -329,7 +294,6 @@ app.put("/api/patients/:id", verifyAdminPin, async (req, res) => {
       emergency_description,
       status,
       telephone_number,
-      caregiver_name,
     } = req.body;
 
     await sql`
@@ -349,9 +313,8 @@ app.put("/api/patients/:id", verifyAdminPin, async (req, res) => {
         emergency_type = ${emergency_type || 'LOW'},
         emergency_description = ${emergency_description || null},
         status = ${status || 'ACTIVE'},
-        telephone_number = ${telephone_number || null},
-        caregiver_name = ${caregiver_name || null}
-      WHERE emer_house_id = ${BigInt(id) as any}
+        telephone_number = ${telephone_number || null}
+      WHERE emer_house_id = ${Number(id)}
     `;
 
     res.json({ success: true, message: "อัปเดตข้อมูลผู้ป่วยเรียบร้อยแล้ว" });
@@ -365,23 +328,10 @@ app.put("/api/patients/:id", verifyAdminPin, async (req, res) => {
 app.delete("/api/patients/:id", verifyAdminPin, async (req, res) => {
   try {
     const { id } = req.params;
-    let targetId: bigint;
-    try {
-      targetId = BigInt(id);
-    } catch {
-      return res.status(400).json({ error: "รหัสผู้ป่วยไม่ถูกต้องกรุณาตรวจสอบ" });
-    }
-
-    const result = await sql`
+    await sql`
       DELETE FROM emergency_house 
-      WHERE emer_house_id = ${targetId as any}
-      RETURNING emer_house_id;
+      WHERE emer_house_id = ${Number(id)};
     `;
-
-    if (result.count === 0) {
-      return res.status(404).json({ error: "ไม่พบข้อมูลผู้ป่วยกลุ่มเปราะบางที่ต้องการลบ" });
-    }
-
     res.json({ success: true, message: "ลบข้อมูลผู้ป่วยกลุ่มเปราะบางเรียบร้อยแล้ว" });
   } catch (err: any) {
     console.error("DELETE /api/patients/:id error:", err);
@@ -455,32 +405,8 @@ Respond with a JSON object containing keys "priority" (must be strictly one of "
     const parsed = JSON.parse(response.text || "{}");
     res.json(parsed);
   } catch (err: any) {
-    console.warn("Gemini Priority analysis failed. Falling back to keyword matching heuristics:", err.message);
-    
-    // Graceful fallback matching on the server side
-    const { description } = req.body;
-    const descLower = (description || "").toLowerCase();
-    let priority = "LOW";
-    let reason = "ประเมินโดยใช้อัลกอริทึมจำแนกตามคำสำคัญของอุปกรณ์แพทย์ (สแตนด์บายฉุกเฉิน):";
-
-    if (descLower.includes("เครื่องช่วยหายใจ") || descLower.includes("ventilator") || descLower.includes("ช่วยหายใจ")) {
-      priority = "CRITICAL";
-      reason += " ตรวจพบคำว่า 'เครื่องช่วยหายใจ' ซึ่งมีความเสี่ยงสูงสุดต่อชีวิตเมื่อไม่มีไฟฟ้าใช้งาน";
-    } else if (descLower.includes("ดูดเสมหะ") || descLower.includes("suction") || descLower.includes("ผลิตออกซิเจน") || descLower.includes("oxygen")) {
-      priority = "HIGH";
-      reason += " ตรวจพบอุปกรณ์พยุงชีพไฟฟ้าระดับสูง (เครื่องผลิตออกซิเจน หรือ เครื่องดูดเสมหะ)";
-    } else if (descLower.includes("เตียงไฟฟ้า") || descLower.includes("ที่นอนลม") || descLower.includes("ลม") || descLower.includes("เตียงพยาบาล")) {
-      priority = "MEDIUM";
-      reason += " ตรวจพบอุปกรณ์ไฟฟ้าอำนวยความสะดวกป้องกันแผลกดทับ (เตียงพยาบาลไฟฟ้า หรือ ที่นอนลม)";
-    } else {
-      priority = "LOW";
-      reason += " เป็นผู้ป่วยติดเตียงดูแลประคับประคองทั่วไป ไม่พบอุปกรณ์พยุงชีพไฟฟ้าสำคัญในรายละเอียดข้อมูล";
-    }
-
-    res.json({
-      priority,
-      reason: reason + " (ระบบเซิร์ฟเวอร์สแตนด์บายสแกนจัดชั้นความปลอดภัยเนื่องจาก AI ขัดข้องชั่วคราว)"
-    });
+    console.error("Gemini Priority analysis error:", err);
+    res.status(500).json({ error: `ไม่สามารถเชื่อมต่อพลังวิเคราะห์ AI ได้: ${err.message}` });
   }
 });
 
@@ -545,13 +471,11 @@ app.post("/api/reports/resolve-instant", async (req, res) => {
     }
 
     if (idsToResolve.length > 0) {
-      for (const targetId of idsToResolve) {
-        await sql`
-          UPDATE electricity_down_report 
-          SET fixed_status = 'RESOLVED' 
-          WHERE report_id = ${BigInt(targetId) as any};
-        `;
-      }
+      await sql`
+        UPDATE electricity_down_report 
+        SET fixed_status = 'RESOLVED' 
+        WHERE report_id IN (${idsToResolve});
+      `;
     }
 
     res.json({ 

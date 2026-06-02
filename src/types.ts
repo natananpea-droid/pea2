@@ -16,7 +16,6 @@ export interface Patient {
   emergency_description: string | null;
   status: string | null; // e.g. ACTIVE or INACTIVE
   telephone_number: string | null; // Patient/caregiver phone number
-  caregiver_name: string | null; // Name on electricity bill or caregiver name
   
   // Computed field for UI
   distanceFromOutage?: number; // in km
